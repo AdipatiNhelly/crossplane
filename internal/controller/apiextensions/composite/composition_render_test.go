@@ -16,7 +16,6 @@ specific language governing permissions and limitations under the License.
 package composite
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -24,8 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/utils/ptr"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
@@ -142,7 +140,7 @@ func TestRenderComposedResourceMetadata(t *testing.T) {
 	controlled := &fake.Composed{
 		ObjectMeta: metav1.ObjectMeta{
 			OwnerReferences: []metav1.OwnerReference{{
-				Controller: pointer.Bool(true),
+				Controller: ptr.To(true),
 				UID:        "very-random",
 			}},
 		},
@@ -179,7 +177,7 @@ func TestRenderComposedResourceMetadata(t *testing.T) {
 				cd: &fake.Composed{
 					ObjectMeta: metav1.ObjectMeta{
 						OwnerReferences: []metav1.OwnerReference{{
-							Controller: pointer.Bool(true),
+							Controller: ptr.To(true),
 							UID:        "very-random",
 						}},
 					},
@@ -190,7 +188,7 @@ func TestRenderComposedResourceMetadata(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						GenerateName: "prefix-",
 						OwnerReferences: []metav1.OwnerReference{{
-							Controller: pointer.Bool(true),
+							Controller: ptr.To(true),
 							UID:        "very-random",
 						}},
 						Labels: map[string]string{
@@ -219,7 +217,7 @@ func TestRenderComposedResourceMetadata(t *testing.T) {
 				cd: &fake.Composed{
 					ObjectMeta: metav1.ObjectMeta{
 						OwnerReferences: []metav1.OwnerReference{{
-							Controller: pointer.Bool(true),
+							Controller: ptr.To(true),
 							UID:        "somewhat-random",
 						}},
 					},
@@ -230,8 +228,8 @@ func TestRenderComposedResourceMetadata(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						GenerateName: "prefix-",
 						OwnerReferences: []metav1.OwnerReference{{
-							Controller:         pointer.Bool(true),
-							BlockOwnerDeletion: pointer.Bool(true),
+							Controller:         ptr.To(true),
+							BlockOwnerDeletion: ptr.To(true),
 							UID:                "somewhat-random",
 						}},
 						Labels: map[string]string{
@@ -264,8 +262,8 @@ func TestRenderComposedResourceMetadata(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						GenerateName: "prefix-",
 						OwnerReferences: []metav1.OwnerReference{{
-							Controller:         pointer.Bool(true),
-							BlockOwnerDeletion: pointer.Bool(true),
+							Controller:         ptr.To(true),
+							BlockOwnerDeletion: ptr.To(true),
 							UID:                "somewhat-random",
 							Name:               "cool-xr",
 						}},
@@ -287,99 +285,6 @@ func TestRenderComposedResourceMetadata(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want.cd, tc.args.cd); diff != "" {
 				t.Errorf("\n%s\nRenderComposedResourceMetadata(...): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-}
-
-func TestDryRunRender(t *testing.T) {
-	errBoom := errors.New("boom")
-
-	type args struct {
-		ctx context.Context
-		cd  resource.Composed
-	}
-	type want struct {
-		cd  resource.Composed
-		err error
-	}
-	cases := map[string]struct {
-		reason string
-		client client.Client
-		args
-		want
-	}{
-		"SkipDryRunForNamedResources": {
-			reason: "We should not try to dry-run create resources that already have a name",
-			// We must be returning early, or else we'd hit this error.
-			client: &test.MockClient{MockCreate: test.NewMockCreateFn(errBoom)},
-			args: args{
-				cd: &fake.Composed{ObjectMeta: metav1.ObjectMeta{
-					Name: "already-has-a-cool-name",
-				}},
-			},
-			want: want{
-				cd: &fake.Composed{ObjectMeta: metav1.ObjectMeta{
-					Name: "already-has-a-cool-name",
-				}},
-				err: nil,
-			},
-		},
-		"SkipDryRunForResourcesWithoutGenerateName": {
-			reason: "We should not try to dry-run create resources that don't have a generate name (though that should never happen)",
-			// We must be returning early, or else we'd hit this error.
-			client: &test.MockClient{MockCreate: test.NewMockCreateFn(errBoom)},
-			args: args{
-				cd: &fake.Composed{}, // Conspicously missing a generate name.
-			},
-			want: want{
-				cd:  &fake.Composed{},
-				err: nil,
-			},
-		},
-		"DryRunError": {
-			reason: "Errors dry-run creating the rendered composed resource to name it should be returned",
-			client: &test.MockClient{MockCreate: test.NewMockCreateFn(errBoom)},
-			args: args{
-				cd: &fake.Composed{ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "cool-resource-",
-				}},
-			},
-			want: want{
-				cd: &fake.Composed{ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "cool-resource-",
-				}},
-				err: errors.Wrap(errBoom, errName),
-			},
-		},
-		"Success": {
-			reason: "Updates returned by dry-run creating the composed resource should be rendered",
-			client: &test.MockClient{MockCreate: test.NewMockCreateFn(nil, func(obj client.Object) error {
-				obj.SetName("cool-resource-42")
-				return nil
-			})},
-			args: args{
-				cd: &fake.Composed{ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "cool-resource-",
-				}},
-			},
-			want: want{
-				cd: &fake.Composed{ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "cool-resource-",
-					Name:         "cool-resource-42",
-				}},
-			},
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			r := NewAPIDryRunRenderer(tc.client)
-			err := r.DryRunRender(tc.args.ctx, tc.args.cd)
-			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\nDryRunRender(...): -want, +got:\n%s", tc.reason, diff)
-			}
-			if diff := cmp.Diff(tc.want.cd, tc.args.cd); diff != "" {
-				t.Errorf("\n%s\nDryRunRender(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
 	}

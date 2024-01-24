@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -265,11 +265,11 @@ func TestFunctionCompose(t *testing.T) {
 				err: errors.Wrapf(RenderComposedResourceMetadata(nil, composite.New(), ""), errFmtRenderMetadata, "cool-resource"),
 			},
 		},
-		"DryRunCreateComposedResourceError": {
-			reason: "We should return any error we encounter when dry-run creating a composed resource",
+		"GenerateNameCreateComposedResourceError": {
+			reason: "We should return any error we encounter when naming a composed resource",
 			params: params{
 				kube: &test.MockClient{
-					MockCreate: test.NewMockCreateFn(errBoom),
+					MockGet: test.NewMockGetFn(errBoom),
 				},
 				r: FunctionRunnerFn(func(ctx context.Context, name string, req *v1beta1.RunFunctionRequest) (rsp *v1beta1.RunFunctionResponse, err error) {
 					d := &v1beta1.State{
@@ -311,7 +311,7 @@ func TestFunctionCompose(t *testing.T) {
 				},
 			},
 			want: want{
-				err: errors.Wrapf(errBoom, errFmtDryRunCreateCD, "cool-resource"),
+				err: errors.Wrapf(errBoom, errFmtGenerateName, "cool-resource"),
 			},
 		},
 		"GarbageCollectComposedResourcesError": {
@@ -454,7 +454,7 @@ func TestFunctionCompose(t *testing.T) {
 			reason: "We should return any error we encounter when applying a composed resource",
 			params: params{
 				kube: &test.MockClient{
-					MockCreate: test.NewMockCreateFn(nil),
+					MockGet: test.NewMockGetFn(kerrors.NewNotFound(schema.GroupResource{Resource: "UncoolComposed"}, "")), // all names are available
 					MockPatch: test.NewMockPatchFn(nil, func(obj client.Object) error {
 						// We only want to return an error if we're patching a
 						// composed resource.
@@ -514,7 +514,7 @@ func TestFunctionCompose(t *testing.T) {
 			reason: "We should return a valid CompositionResult when a 'pure Function' (i.e. patch-and-transform-less) reconcile succeeds",
 			params: params{
 				kube: &test.MockClient{
-					MockCreate:      test.NewMockCreateFn(nil),
+					MockGet:         test.NewMockGetFn(kerrors.NewNotFound(schema.GroupResource{Resource: "UncoolComposed"}, "")), // all names are available
 					MockPatch:       test.NewMockPatchFn(nil),
 					MockStatusPatch: test.NewMockSubResourcePatchFn(nil),
 				},
@@ -767,7 +767,7 @@ func TestGetComposedResources(t *testing.T) {
 					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
 						_ = meta.AddControllerReference(obj, metav1.OwnerReference{
 							UID:        types.UID("someone-else"),
-							Controller: pointer.Bool(true),
+							Controller: ptr.To(true),
 						})
 
 						return nil
@@ -1039,7 +1039,7 @@ func TestGarbageCollectComposedResources(t *testing.T) {
 							ObjectMeta: metav1.ObjectMeta{
 								// This resource is controlled by the XR.
 								OwnerReferences: []metav1.OwnerReference{{
-									Controller: pointer.Bool(true),
+									Controller: ptr.To(true),
 									UID:        "cool-xr",
 								}},
 							},
@@ -1070,7 +1070,7 @@ func TestGarbageCollectComposedResources(t *testing.T) {
 							ObjectMeta: metav1.ObjectMeta{
 								// This resource is controlled by the XR.
 								OwnerReferences: []metav1.OwnerReference{{
-									Controller: pointer.Bool(true),
+									Controller: ptr.To(true),
 									UID:        "cool-xr",
 								}},
 							},
@@ -1102,7 +1102,7 @@ func TestGarbageCollectComposedResources(t *testing.T) {
 							ObjectMeta: metav1.ObjectMeta{
 								// This resource is controlled by the XR.
 								OwnerReferences: []metav1.OwnerReference{{
-									Controller: pointer.Bool(true),
+									Controller: ptr.To(true),
 									UID:        "cool-xr",
 								}},
 							},

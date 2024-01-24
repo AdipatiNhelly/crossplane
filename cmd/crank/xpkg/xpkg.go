@@ -14,43 +14,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package xpkg contains the Crossplane packaging commands.
+// Package xpkg contains Crossplane packaging commands.
 package xpkg
 
+// TODO(lsviben) add the rest of the commands from up (batch, xpextract).
+
 // Cmd contains commands for interacting with xpkgs.
-// TODO(lsviben) add the rest of the commands from up (push, batch, xpextract).
 type Cmd struct {
-	Build buildCmd `cmd:"" help:"Build a package, by default from the current directory."`
+	// Keep subcommands sorted alphabetically.
+	Build   buildCmd   `cmd:"" help:"Build a new package."`
+	Install installCmd `cmd:"" help:"Install a package in a control plane."`
+	Login   loginCmd   `cmd:"" help:"Login to the default package registry."`
+	Logout  logoutCmd  `cmd:"" help:"Logout of the default package registry."`
+	Push    pushCmd    `cmd:"" help:"Push a package to a registry."`
+	Update  updateCmd  `cmd:"" help:"Update a package in a control plane."`
 }
 
 // Help prints out the help for the xpkg command.
 func (c *Cmd) Help() string {
 	return `
-A Crossplane package is an opinionated OCI image that contains an additional layer 
-holding meta information to drive the Crossplane package manager. The package manager
-uses this information to install packages into a Crossplane instance.
+Crossplane can be extended using packages. Crossplane packages are called xpkgs.
+Crossplane supports configuration, provider and function packages. 
 
-Furthermore, a Crossplane package may contain meta information that describes
-how to represent the package in a user interface. This information is used by
-the Upbound marketplace to display packages and their contents. See the xpkg
-reference document for more information.
+A package is an opinionated OCI image that contains everything needed to extend
+a Crossplane control plane with new functionality. For example installing a
+provider package extends Crossplane with support for new kinds of managed
+resource (MR).
 
-There are different kinds of Crossplane packages, each with a different set of
-meta information and files in the additional layer. The following kinds are 
-currently supported:
-
-- **Provider**: A Crossplane package that contains a Crossplane provider. The layer
-  contains a crossplane.yaml file with a "meta.pkg.crossplane.io/v1alpha1"
-  kind "Provider" manifest, and optionally CRD manifest.
-- **Configuration**: A Crossplane package that contains a Crossplane configuration,
-  with a "meta.pkg.crossplane.io/v1" kind "Configuration" manifest in crossplane.yaml.
-- **Function**: A crossplane package that contains a Crossplane function, with a
-  "meta.pkg.crossplane.io/v1beta1" kind "Function" manifest in crossplane.yaml.
-- in newer versions of Crossplane, more kinds will be supported.
-
-For more detailed information on Crossplane packages, see
-
-  https://docs.crossplane.io/latest/concepts/packages/#building-a-package
-
-Even more details can be found in the xpkg reference document.`
+See https://docs.crossplane.io/latest/concepts/packages for more information.
+`
 }

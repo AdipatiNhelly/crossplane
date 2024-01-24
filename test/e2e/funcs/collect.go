@@ -98,7 +98,12 @@ func buildRelatedObjectGraph(ctx context.Context, discoveryClient discovery.Disc
 				comp := composite.Unstructured{Unstructured: obj}
 				refs = append(refs, comp.GetResourceReferences()...)
 				if ref := comp.GetClaimReference(); ref != nil {
-					refs = append(refs, *ref)
+					refs = append(refs, corev1.ObjectReference{
+						APIVersion: ref.APIVersion,
+						Kind:       ref.Kind,
+						Name:       ref.Name,
+						Namespace:  ref.Namespace,
+					})
 				}
 
 				for _, ref := range refs {

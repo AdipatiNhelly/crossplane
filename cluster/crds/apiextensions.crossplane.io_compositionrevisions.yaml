@@ -158,6 +158,11 @@ spec:
                                 if nil.
                               format: int64
                               type: integer
+                            minMatch:
+                              description: MinMatch specifies the required minimum
+                                of extracted EnvironmentConfigs in Multiple mode.
+                              format: int64
+                              type: integer
                             mode:
                               default: Single
                               description: 'Mode specifies retrieval strategy: "Single"
@@ -308,7 +313,7 @@ spec:
                                     - bool
                                     - float64
                                     - object
-                                    - list
+                                    - array
                                     type: string
                                 required:
                                 - toType
@@ -689,7 +694,7 @@ spec:
                                       - bool
                                       - float64
                                       - object
-                                      - list
+                                      - array
                                       type: string
                                   required:
                                   - toType
@@ -1148,7 +1153,7 @@ spec:
                                       - bool
                                       - float64
                                       - object
-                                      - list
+                                      - array
                                       type: string
                                   required:
                                   - toType
@@ -1612,6 +1617,11 @@ spec:
                                 if nil.
                               format: int64
                               type: integer
+                            minMatch:
+                              description: MinMatch specifies the required minimum
+                                of extracted EnvironmentConfigs in Multiple mode.
+                              format: int64
+                              type: integer
                             mode:
                               default: Single
                               description: 'Mode specifies retrieval strategy: "Single"
@@ -1762,7 +1772,7 @@ spec:
                                     - bool
                                     - float64
                                     - object
-                                    - list
+                                    - array
                                     type: string
                                 required:
                                 - toType
@@ -2143,7 +2153,7 @@ spec:
                                       - bool
                                       - float64
                                       - object
-                                      - list
+                                      - array
                                       type: string
                                   required:
                                   - toType
@@ -2602,7 +2612,7 @@ spec:
                                       - bool
                                       - float64
                                       - object
-                                      - list
+                                      - array
                                       type: string
                                   required:
                                   - toType

@@ -10,10 +10,18 @@ on:
         description: 'Release channel'
         required: true
         default: 'stable'
+      # Note: For pre-releases, we want to promote the pre-release version to
+      # the (stable) channel, but not set it as the "current" version.
+      # See: https://github.com/upbound/build/pull/243
+      pre-release:
+        type: boolean
+        description: 'This is a pre-release'
+        required: true
+        default: false
 
 env:
   # Common versions
-  GO_VERSION: '1.21.2'
+  GO_VERSION: '1.21.5'
 
   # Common users. We can't run a step 'if secrets.AWS_USR != ""' but we can run
   # a step 'if env.AWS_USR' != ""', so we copy these to succinctly test whether
@@ -28,12 +36,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608 # v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
         with:
           submodules: true
 
       - name: Setup Go
-        uses: actions/setup-go@93397bea11091df50f3d7e59dc26a7711a8bcfbe # v4
+        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -61,6 +69,7 @@ jobs:
         env:
           VERSION: ${{ github.event.inputs.version }}
           CHANNEL: ${{ github.event.inputs.channel }}
+          PRE_RELEASE: ${{ github.event.inputs.pre-release }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_USR }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_PSW }}
           AWS_DEFAULT_REGION: us-east-1

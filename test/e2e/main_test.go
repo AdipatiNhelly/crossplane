@@ -82,6 +82,7 @@ func TestMain(m *testing.M) {
 				"--set args={--debug}",
 				"--set image.repository="+strings.Split(imgcore, ":")[0],
 				"--set image.tag="+strings.Split(imgcore, ":")[1],
+				"--set metrics.enabled=true",
 			),
 		),
 		config.WithLabelsToSelect(features.Labels{
@@ -98,7 +99,11 @@ func TestMain(m *testing.M) {
 	var finish []env.Func
 
 	if environment.IsKindCluster() {
-		setup = []env.Func{envfuncs.CreateCluster(kind.NewProvider(), environment.GetKindClusterName())}
+		setup = append(setup, envfuncs.CreateClusterWithConfig(
+			kind.NewProvider(),
+			environment.GetKindClusterName(),
+			"./test/e2e/manifests/kind/kind-config.yaml",
+		))
 	} else {
 		cfg.WithKubeconfigFile(conf.ResolveKubeConfigFile())
 	}
@@ -131,10 +136,14 @@ func TestMain(m *testing.M) {
 	// We always want to add our types to the scheme.
 	setup = append(setup, funcs.AddCrossplaneTypesToScheme())
 
+	if environment.ShouldCollectKindLogsOnFailure() {
+		finish = append(finish, envfuncs.ExportClusterLogs(environment.GetKindClusterName(), environment.GetKindClusterLogsLocation()))
+	}
+
 	// We want to destroy the cluster if we created it, but only if we created it,
 	// otherwise the random name will be meaningless.
 	if environment.ShouldDestroyKindCluster() {
-		finish = []env.Func{envfuncs.DestroyCluster(environment.GetKindClusterName())}
+		finish = append(finish, envfuncs.DestroyCluster(environment.GetKindClusterName()))
 	}
 
 	// Check that all features are specifying a suite they belong to via LabelTestSuite.

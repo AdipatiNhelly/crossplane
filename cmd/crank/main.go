@@ -21,11 +21,11 @@ import (
 	"fmt"
 
 	"github.com/alecthomas/kong"
-	"github.com/spf13/afero"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 
+	"github.com/crossplane/crossplane/cmd/crank/beta"
 	"github.com/crossplane/crossplane/cmd/crank/xpkg"
 	"github.com/crossplane/crossplane/internal/version"
 )
@@ -55,33 +55,36 @@ func (v verboseFlag) BeforeApply(ctx *kong.Context) error { //nolint:unparam // 
 	return nil
 }
 
+// The top-level crossplane CLI.
 var cli struct {
-	Version versionFlag `short:"v" name:"version" help:"Print version and quit."`
+	// Subcommands and flags will appear in the CLI help output in the same
+	// order they're specified here. Keep them in alphabetical order.
+
+	// Subcommands.
+	XPKG xpkg.Cmd `cmd:"" help:"Manage Crossplane packages."`
+
+	// The alpha and beta subcommands are intentionally in a separate block. We
+	// want them to appear after all other subcommands.
+	Beta beta.Cmd `cmd:"" help:"Beta commands."`
+
+	// Flags.
 	Verbose verboseFlag `name:"verbose" help:"Print verbose logging statements."`
-
-	Build   buildCmd   `cmd:"" help:"Build Crossplane packages."`
-	Install installCmd `cmd:"" help:"Install Crossplane packages."`
-	Update  updateCmd  `cmd:"" help:"Update Crossplane packages."`
-	Push    pushCmd    `cmd:"" help:"Push Crossplane packages."`
-
-	XPKG xpkg.Cmd `cmd:"" help:"Crossplane package management."`
+	Version versionFlag `short:"v" name:"version" help:"Print version and quit."`
 }
 
 func main() {
-	buildChild := &buildChild{
-		fs: afero.NewOsFs(),
-	}
-	pushChild := &pushChild{
-		fs: afero.NewOsFs(),
-	}
 	logger := logging.NewNopLogger()
 	ctx := kong.Parse(&cli,
 		kong.Name("crossplane"),
 		kong.Description("A command line tool for interacting with Crossplane."),
 		// Binding a variable to kong context makes it available to all commands
 		// at runtime.
-		kong.Bind(buildChild, pushChild),
 		kong.BindTo(logger, (*logging.Logger)(nil)),
+		kong.ConfigureHelp(kong.HelpOptions{
+			FlagsLast:      true,
+			Compact:        true,
+			WrapUpperBound: 80,
+		}),
 		kong.UsageOnError())
 	err := ctx.Run()
 	ctx.FatalIfErrorf(err)

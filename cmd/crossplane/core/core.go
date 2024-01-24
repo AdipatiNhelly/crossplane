@@ -20,8 +20,7 @@ package core
 import (
 	"context"
 	"crypto/tls"
-	"net/http"
-	"net/http/pprof"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -33,9 +32,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/crossplane/crossplane-runtime/pkg/certificates"
@@ -51,6 +52,7 @@ import (
 	pkgcontroller "github.com/crossplane/crossplane/internal/controller/pkg/controller"
 	"github.com/crossplane/crossplane/internal/features"
 	"github.com/crossplane/crossplane/internal/initializer"
+	"github.com/crossplane/crossplane/internal/metrics"
 	"github.com/crossplane/crossplane/internal/transport"
 	"github.com/crossplane/crossplane/internal/usage"
 	"github.com/crossplane/crossplane/internal/validation/apiextensions/v1/composition"
@@ -58,8 +60,6 @@ import (
 	"github.com/crossplane/crossplane/internal/xfn"
 	"github.com/crossplane/crossplane/internal/xpkg"
 )
-
-const pprofPath = "/debug/pprof/"
 
 // Command runs the core crossplane controllers
 type Command struct {
@@ -92,6 +92,8 @@ type startCommand struct {
 	CABundlePath   string `help:"Additional CA bundle to use when fetching packages from registry." env:"CA_BUNDLE_PATH"`
 	UserAgent      string `help:"The User-Agent header that will be set on all package requests." default:"${default_user_agent}" env:"USER_AGENT"`
 
+	PackageRuntime string `helm:"The package runtime to use for packages with a runtime (e.g. Providers and Functions)" default:"Deployment" env:"PACKAGE_RUNTIME"`
+
 	SyncInterval     time.Duration `short:"s" help:"How often all resources will be double-checked for drift from the desired state." default:"1h"`
 	PollInterval     time.Duration `help:"How often individual resources will be checked for drift from the desired state." default:"1m"`
 	MaxReconcileRate int           `help:"The global maximum rate per second at which resources may checked for drift from the desired state." default:"10"`
@@ -103,12 +105,14 @@ type startCommand struct {
 	TLSClientSecretName string `help:"The name of the TLS Secret that will be store Crossplane's client certificate." env:"TLS_CLIENT_SECRET_NAME"`
 	TLSClientCertsDir   string `help:"The path of the folder which will store TLS client certificate of Crossplane." env:"TLS_CLIENT_CERTS_DIR"`
 
-	EnableEnvironmentConfigs                 bool `group:"Alpha Features:" help:"Enable support for EnvironmentConfigs."`
-	EnableExternalSecretStores               bool `group:"Alpha Features:" help:"Enable support for External Secret Stores."`
-	EnableCompositionWebhookSchemaValidation bool `group:"Alpha Features:" help:"Enable support for Composition validation using schemas."`
-	EnableUsages                             bool `group:"Alpha Features:" help:"Enable support for deletion ordering and resource protection with Usages."`
+	EnableEnvironmentConfigs   bool `group:"Alpha Features:" help:"Enable support for EnvironmentConfigs."`
+	EnableExternalSecretStores bool `group:"Alpha Features:" help:"Enable support for External Secret Stores."`
+	EnableUsages               bool `group:"Alpha Features:" help:"Enable support for deletion ordering and resource protection with Usages."`
+	EnableRealtimeCompositions bool `group:"Alpha Features:" help:"Enable support for realtime compositions, i.e. watching composed resources and reconciling compositions immediately when any of the composed resources is updated."`
 
-	EnableCompositionFunctions bool `group:"Beta Features:" default:"true" help:"Enable support for Composition Functions."`
+	EnableCompositionFunctions               bool `group:"Beta Features:" default:"true" help:"Enable support for Composition Functions."`
+	EnableCompositionWebhookSchemaValidation bool `group:"Beta Features:" default:"true" help:"Enable support for Composition validation using schemas."`
+	EnableDeploymentRuntimeConfigs           bool `group:"Beta Features:" default:"true" help:"Enable support for Deployment Runtime Configs."`
 
 	// These are GA features that previously had alpha or beta feature flags.
 	// You can't turn off a GA feature. We maintain the flags to avoid breaking
@@ -119,36 +123,9 @@ type startCommand struct {
 
 // Run core Crossplane controllers.
 func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //nolint:gocyclo // Only slightly over.
-	if c.Profile != "" {
-		// NOTE(negz): These log messages attempt to match those emitted by
-		// controller-runtime's metrics HTTP server when it starts.
-		log.Debug("Profiling server is starting to listen", "addr", c.Profile)
-		go func() {
-
-			// Registering these explicitly ensures they're only served by the
-			// HTTP server we start explicitly for profiling.
-			mux := http.NewServeMux()
-			mux.HandleFunc(pprofPath, pprof.Index)
-			mux.HandleFunc(filepath.Join(pprofPath, "cmdline"), pprof.Cmdline)
-			mux.HandleFunc(filepath.Join(pprofPath, "profile"), pprof.Profile)
-			mux.HandleFunc(filepath.Join(pprofPath, "symbol"), pprof.Symbol)
-			mux.HandleFunc(filepath.Join(pprofPath, "trace"), pprof.Trace)
-
-			s := &http.Server{
-				Addr:         c.Profile,
-				ReadTimeout:  2 * time.Minute,
-				WriteTimeout: 2 * time.Minute,
-				Handler:      mux,
-			}
-			log.Debug("Starting server", "type", "pprof", "path", pprofPath, "addr", s.Addr)
-			err := s.ListenAndServe()
-			log.Debug("Profiling server has stopped listening", "error", err)
-		}()
-	}
-
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		return errors.Wrap(err, "Cannot get config")
+		return errors.Wrap(err, "cannot get config")
 	}
 
 	cfg.WarningHandler = rest.NewWarningWriter(os.Stderr, rest.WarningWriterOptions{
@@ -156,6 +133,7 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 		Deduplicate: true,
 	})
 
+	eb := record.NewBroadcaster()
 	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, c.MaxReconcileRate), ctrl.Options{
 		Scheme: s,
 		Cache: cache.Options{
@@ -175,6 +153,7 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 				Unstructured: false, // this is the default to not cache unstructured objects
 			},
 		},
+		EventBroadcaster: eb,
 
 		// controller-runtime uses both ConfigMaps and Leases for leader
 		// election by default. Leases expire after 15 seconds, with a
@@ -183,15 +162,24 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 		// hundreds of reconciles per second and ~200rps to the API
 		// server. Switching to Leases only and longer leases appears to
 		// alleviate this.
-		LeaderElection:             c.LeaderElection,
-		LeaderElectionID:           "crossplane-leader-election-core",
-		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
-		LeaseDuration:              func() *time.Duration { d := 60 * time.Second; return &d }(),
-		RenewDeadline:              func() *time.Duration { d := 50 * time.Second; return &d }(),
+		LeaderElection:                c.LeaderElection,
+		LeaderElectionID:              "crossplane-leader-election-core",
+		LeaderElectionResourceLock:    resourcelock.LeasesResourceLock,
+		LeaderElectionReleaseOnCancel: true,
+		LeaseDuration:                 func() *time.Duration { d := 60 * time.Second; return &d }(),
+		RenewDeadline:                 func() *time.Duration { d := 50 * time.Second; return &d }(),
+
+		PprofBindAddress:       c.Profile,
+		HealthProbeBindAddress: ":8081",
 	})
 	if err != nil {
-		return errors.Wrap(err, "Cannot create manager")
+		return errors.Wrap(err, "cannot create manager")
 	}
+
+	eb.StartLogging(func(format string, args ...interface{}) {
+		log.Debug(fmt.Sprintf(format, args...))
+	})
+	defer eb.Shutdown()
 
 	o := controller.Options{
 		Logger:                  log,
@@ -209,19 +197,25 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 	if c.EnableCompositionFunctions {
 		o.Features.Enable(features.EnableBetaCompositionFunctions)
 		log.Info("Beta feature enabled", "flag", features.EnableBetaCompositionFunctions)
+
 		clienttls, err := certificates.LoadMTLSConfig(
 			filepath.Join(c.TLSClientCertsDir, initializer.SecretKeyCACert),
 			filepath.Join(c.TLSClientCertsDir, corev1.TLSCertKey),
 			filepath.Join(c.TLSClientCertsDir, corev1.TLSPrivateKeyKey),
 			false)
-
 		if err != nil {
 			return errors.Wrap(err, "cannot load client TLS certificates")
 		}
+
+		m := xfn.NewMetrics()
+		metrics.Registry.MustRegister(m)
+
 		// We want all XR controllers to share the same gRPC clients.
 		functionRunner = xfn.NewPackagedFunctionRunner(mgr.GetClient(),
 			xfn.WithLogger(log),
-			xfn.WithTLSConfig(clienttls))
+			xfn.WithTLSConfig(clienttls),
+			xfn.WithInterceptorCreators(m),
+		)
 
 		// Periodically remove clients for Functions that no longer exist.
 		ctx, cancel := context.WithCancel(context.Background())
@@ -233,8 +227,8 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 		log.Info("Alpha feature enabled", "flag", features.EnableAlphaEnvironmentConfigs)
 	}
 	if c.EnableCompositionWebhookSchemaValidation {
-		o.Features.Enable(features.EnableAlphaCompositionWebhookSchemaValidation)
-		log.Info("Alpha feature enabled", "flag", features.EnableAlphaCompositionWebhookSchemaValidation)
+		o.Features.Enable(features.EnableBetaCompositionWebhookSchemaValidation)
+		log.Info("Beta feature enabled", "flag", features.EnableBetaCompositionWebhookSchemaValidation)
 	}
 	if c.EnableUsages {
 		o.Features.Enable(features.EnableAlphaUsages)
@@ -250,12 +244,20 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 			filepath.Join(c.TLSClientCertsDir, corev1.TLSPrivateKeyKey),
 			false)
 		if err != nil {
-			return errors.Wrap(err, "Cannot load TLS certificates for external secret stores")
+			return errors.Wrap(err, "cannot load TLS certificates for external secret stores")
 		}
 
 		o.ESSOptions = &controller.ESSOptions{
 			TLSConfig: tcfg,
 		}
+	}
+	if c.EnableRealtimeCompositions {
+		o.Features.Enable(features.EnableRealtimeCompositions)
+		log.Info("Alpha feature enabled", "flag", features.EnableRealtimeCompositions)
+	}
+	if c.EnableDeploymentRuntimeConfigs {
+		o.Features.Enable(features.EnableBetaDeploymentRuntimeConfigs)
+		log.Info("Beta feature enabled", "flag", features.EnableBetaDeploymentRuntimeConfigs)
 	}
 
 	ao := apiextensionscontroller.Options{
@@ -267,7 +269,18 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 	}
 
 	if err := apiextensions.Setup(mgr, ao); err != nil {
-		return errors.Wrap(err, "Cannot setup API extension controllers")
+		return errors.Wrap(err, "cannot setup API extension controllers")
+	}
+
+	var pr pkgcontroller.PackageRuntime
+	switch c.PackageRuntime {
+	case string(pkgcontroller.PackageRuntimeDeployment):
+		pr = pkgcontroller.PackageRuntimeDeployment
+	case string(pkgcontroller.PackageRuntimeExternal):
+		pr = pkgcontroller.PackageRuntimeExternal
+	default:
+		return errors.Errorf("unsupported package runtime %q, supported runtimes are %q and %q",
+			c.PackageRuntime, pkgcontroller.PackageRuntimeDeployment, pkgcontroller.PackageRuntimeExternal)
 	}
 
 	po := pkgcontroller.Options{
@@ -277,18 +290,19 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 		ServiceAccount:  c.ServiceAccount,
 		DefaultRegistry: c.Registry,
 		FetcherOptions:  []xpkg.FetcherOpt{xpkg.WithUserAgent(c.UserAgent)},
+		PackageRuntime:  pr,
 	}
 
 	if c.CABundlePath != "" {
 		rootCAs, err := ParseCertificatesFromPath(c.CABundlePath)
 		if err != nil {
-			return errors.Wrap(err, "Cannot parse CA bundle")
+			return errors.Wrap(err, "cannot parse CA bundle")
 		}
 		po.FetcherOptions = append(po.FetcherOptions, xpkg.WithCustomCA(rootCAs))
 	}
 
 	if err := pkg.Setup(mgr, po); err != nil {
-		return errors.Wrap(err, "Cannot add packages controllers to manager")
+		return errors.Wrap(err, "cannot add packages controllers to manager")
 	}
 
 	// Registering webhooks with the manager is what actually starts the webhook
@@ -310,5 +324,34 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 		}
 	}
 
-	return errors.Wrap(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
+	if err := c.SetupProbes(mgr); err != nil {
+		return errors.Wrap(err, "cannot setup probes")
+	}
+
+	return errors.Wrap(mgr.Start(ctrl.SetupSignalHandler()), "cannot start controller manager")
+}
+
+// SetupProbes sets up the health and readiness probes.
+func (c *startCommand) SetupProbes(mgr ctrl.Manager) error {
+	// Add default readiness probe
+	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+		return errors.Wrap(err, "cannot create ping ready check")
+	}
+
+	// Add default health probe
+	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+		return errors.Wrap(err, "cannot create ping health check")
+	}
+
+	// Add probes waiting for the webhook server if webhooks are enabled
+	if c.WebhookEnabled {
+		hookServer := mgr.GetWebhookServer()
+		if err := mgr.AddReadyzCheck("webhook", hookServer.StartedChecker()); err != nil {
+			return errors.Wrap(err, "cannot create webhook ready check")
+		}
+		if err := mgr.AddHealthzCheck("webhook", hookServer.StartedChecker()); err != nil {
+			return errors.Wrap(err, "cannot create webhook health check")
+		}
+	}
+	return nil
 }

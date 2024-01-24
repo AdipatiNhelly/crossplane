@@ -34,6 +34,11 @@ func (f *Function) SetConditions(c ...xpv1.Condition) {
 	f.Status.SetConditions(c...)
 }
 
+// CleanConditions removes all conditions
+func (f *Function) CleanConditions() {
+	f.Status.Conditions = []xpv1.Condition{}
+}
+
 // GetSource of this Function.
 func (f *Function) GetSource() string {
 	return f.Spec.Package
@@ -102,6 +107,16 @@ func (f *Function) GetControllerConfigRef() *v1.ControllerConfigReference {
 // SetControllerConfigRef of this Function.
 func (f *Function) SetControllerConfigRef(*v1.ControllerConfigReference) {}
 
+// GetRuntimeConfigRef of this Function.
+func (f *Function) GetRuntimeConfigRef() *v1.RuntimeConfigReference {
+	return f.Spec.RuntimeConfigReference
+}
+
+// SetRuntimeConfigRef of this Function.
+func (f *Function) SetRuntimeConfigRef(r *v1.RuntimeConfigReference) {
+	f.Spec.RuntimeConfigReference = r
+}
+
 // GetCurrentRevision of this Function.
 func (f *Function) GetCurrentRevision() string {
 	return f.Status.CurrentRevision
@@ -162,6 +177,11 @@ func (r *FunctionRevision) SetConditions(c ...xpv1.Condition) {
 	r.Status.SetConditions(c...)
 }
 
+// CleanConditions removes all conditions
+func (r *FunctionRevision) CleanConditions() {
+	r.Status.Conditions = []xpv1.Condition{}
+}
+
 // GetObjects of this FunctionRevision.
 func (r *FunctionRevision) GetObjects() []xpv1.TypedReference {
 	return r.Status.ObjectRefs
@@ -170,16 +190,6 @@ func (r *FunctionRevision) GetObjects() []xpv1.TypedReference {
 // SetObjects of this FunctionRevision.
 func (r *FunctionRevision) SetObjects(c []xpv1.TypedReference) {
 	r.Status.ObjectRefs = c
-}
-
-// GetControllerReference of this FunctionRevision.
-func (r *FunctionRevision) GetControllerReference() v1.ControllerReference {
-	return r.Status.ControllerRef
-}
-
-// SetControllerReference of this FunctionRevision.
-func (r *FunctionRevision) SetControllerReference(c v1.ControllerReference) {
-	r.Status.ControllerRef = c
 }
 
 // GetSource of this FunctionRevision.
@@ -262,6 +272,16 @@ func (r *FunctionRevision) GetControllerConfigRef() *v1.ControllerConfigReferenc
 // SetControllerConfigRef of this FunctionRevision.
 func (r *FunctionRevision) SetControllerConfigRef(ref *v1.ControllerConfigReference) {
 	r.Spec.ControllerConfigReference = ref
+}
+
+// GetRuntimeConfigRef of this FunctionRevision.
+func (r *FunctionRevision) GetRuntimeConfigRef() *v1.RuntimeConfigReference {
+	return r.Spec.RuntimeConfigReference
+}
+
+// SetRuntimeConfigRef of this FunctionRevision.
+func (r *FunctionRevision) SetRuntimeConfigRef(ref *v1.RuntimeConfigReference) {
+	r.Spec.RuntimeConfigReference = ref
 }
 
 // GetSkipDependencyResolution of this FunctionRevision.

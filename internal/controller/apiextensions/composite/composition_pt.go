@@ -24,7 +24,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -38,6 +38,7 @@ import (
 
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/crossplane/crossplane/internal/controller/apiextensions/usage"
+	"github.com/crossplane/crossplane/internal/names"
 )
 
 // Error strings
@@ -48,15 +49,14 @@ const (
 	errFetchDetails  = "cannot fetch connection details"
 	errInline        = "cannot inline Composition patch sets"
 
-	errFmtPatchEnvironment             = "cannot apply environment patch at index %d"
-	errFmtParseBase                    = "cannot parse base template of composed resource %q"
-	errFmtRenderFromCompositePatches   = "cannot render FromComposite patches for composed resource %q"
-	errFmtRenderToCompositePatches     = "cannot render ToComposite patches for composed resource %q"
-	errFmtRenderFromEnvironmentPatches = "cannot render FromEnvironment patches for composed resource %q"
-	errFmtRenderMetadata               = "cannot render metadata for composed resource %q"
-	errFmtDryRunApply                  = "cannot dry-run apply composed resource %q"
-	errFmtExtractDetails               = "cannot extract composite resource connection details from composed resource %q"
-	errFmtCheckReadiness               = "cannot check whether composed resource %q is ready"
+	errFmtPatchEnvironment           = "cannot apply environment patch at index %d"
+	errFmtParseBase                  = "cannot parse base template of composed resource %q"
+	errFmtRenderFromCompositePatches = "cannot render FromComposite or environment patches for composed resource %q"
+	errFmtRenderToCompositePatches   = "cannot render ToComposite patches for composed resource %q"
+	errFmtRenderMetadata             = "cannot render metadata for composed resource %q"
+	errFmtGenerateName               = "cannot generate a name for composed resource %q"
+	errFmtExtractDetails             = "cannot extract composite resource connection details from composed resource %q"
+	errFmtCheckReadiness             = "cannot check whether composed resource %q is ready"
 )
 
 // TODO(negz): Move P&T Composition logic into its own package?
@@ -72,12 +72,11 @@ func WithTemplateAssociator(a CompositionTemplateAssociator) PTComposerOption {
 	}
 }
 
-// WithComposedDryRunRenderer configures how the PTComposer should dry-run
-// render composed resources - i.e. by submitting them to the API server to
-// generate a name for them.
-func WithComposedDryRunRenderer(r DryRunRenderer) PTComposerOption {
+// WithComposedNameGenerator configures how the PTComposer should generate names
+// for unnamed composed resources.
+func WithComposedNameGenerator(r names.NameGenerator) PTComposerOption {
 	return func(c *PTComposer) {
-		c.composed.DryRunRenderer = r
+		c.composed.NameGenerator = r
 	}
 }
 
@@ -107,7 +106,7 @@ func WithComposedConnectionDetailsExtractor(e ConnectionDetailsExtractor) PTComp
 }
 
 type composedResource struct {
-	DryRunRenderer
+	names.NameGenerator
 	managed.ConnectionDetailsFetcher
 	ConnectionDetailsExtractor
 	ReadinessChecker
@@ -136,7 +135,7 @@ func NewPTComposer(kube client.Client, o ...PTComposerOption) *PTComposer {
 
 		composition: NewGarbageCollectingAssociator(kube),
 		composed: composedResource{
-			DryRunRenderer:             NewAPIDryRunRenderer(kube),
+			NameGenerator:              names.NewNameGenerator(kube),
 			ReadinessChecker:           ReadinessCheckerFn(IsReady),
 			ConnectionDetailsFetcher:   NewSecretConnectionDetailsFetcher(kube),
 			ConnectionDetailsExtractor: ConnectionDetailsExtractorFn(ExtractConnectionDetails),
@@ -202,7 +201,7 @@ func (c *PTComposer) Compose(ctx context.Context, xr *composite.Unstructured, re
 		ta := tas[i]
 
 		// If this resource is anonymous its "name" is just its index.
-		name := pointer.StringDeref(ta.Template.Name, fmt.Sprintf("resource %d", i+1))
+		name := ptr.Deref(ta.Template.Name, fmt.Sprintf("resource %d", i+1))
 		r := composed.New(composed.FromReference(ta.Reference))
 
 		if err := RenderFromJSON(r, ta.Template.Base.Raw); err != nil {
@@ -218,23 +217,18 @@ func (c *PTComposer) Compose(ctx context.Context, xr *composite.Unstructured, re
 		// unblock it.
 
 		rendered := true
-		if err := RenderFromCompositePatches(r, xr, ta.Template.Patches); err != nil {
+		if err := RenderFromCompositeAndEnvironmentPatches(r, xr, req.Environment, ta.Template.Patches); err != nil {
 			events = append(events, event.Warning(reasonCompose, errors.Wrapf(err, errFmtRenderFromCompositePatches, name)))
 			rendered = false
 		}
 
-		if err = RenderToAndFromEnvironmentPatches(r, req.Environment, ta.Template.Patches); err != nil {
-			events = append(events, event.Warning(reasonCompose, errors.Wrapf(err, errFmtRenderFromEnvironmentPatches, name)))
-			rendered = false
-		}
-
-		if err := RenderComposedResourceMetadata(r, xr, ResourceName(pointer.StringDeref(ta.Template.Name, ""))); err != nil {
+		if err := RenderComposedResourceMetadata(r, xr, ResourceName(ptr.Deref(ta.Template.Name, ""))); err != nil {
 			events = append(events, event.Warning(reasonCompose, errors.Wrapf(err, errFmtRenderMetadata, name)))
 			rendered = false
 		}
 
-		if err := c.composed.DryRunRender(ctx, r); err != nil {
-			events = append(events, event.Warning(reasonCompose, errors.Wrapf(err, errFmtDryRunApply, name)))
+		if err := c.composed.GenerateName(ctx, r); err != nil {
+			events = append(events, event.Warning(reasonCompose, errors.Wrapf(err, errFmtGenerateName, name)))
 			rendered = false
 		}
 
@@ -298,7 +292,7 @@ func (c *PTComposer) Compose(ctx context.Context, xr *composite.Unstructured, re
 
 		// If this resource is anonymous its "name" is just its index within the
 		// array of composed resource templates.
-		name := ResourceName(pointer.StringDeref(t.Name, fmt.Sprintf("resource %d", i+1)))
+		name := ResourceName(ptr.Deref(t.Name, fmt.Sprintf("resource %d", i+1)))
 
 		// If we were unable to render the composed resource we should not try
 		// to observe it. We still want to return it to the Reconciler so that

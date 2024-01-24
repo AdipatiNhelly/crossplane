@@ -7,7 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	v1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 )
@@ -30,8 +30,8 @@ func TestEnvironmentPatchValidate(t *testing.T) {
 			args: args{
 				envPatch: &EnvironmentPatch{
 					Type:          PatchTypeFromCompositeFieldPath,
-					FromFieldPath: pointer.String("spec.foo"),
-					ToFieldPath:   pointer.String("metadata.annotations[\"foo\"]"),
+					FromFieldPath: ptr.To("spec.foo"),
+					ToFieldPath:   ptr.To("metadata.annotations[\"foo\"]"),
 				},
 			},
 			want: want{output: nil},
@@ -41,7 +41,7 @@ func TestEnvironmentPatchValidate(t *testing.T) {
 			args: args{
 				envPatch: &EnvironmentPatch{
 					Type:        PatchTypeFromCompositeFieldPath,
-					ToFieldPath: pointer.String("metadata.annotations[\"foo\"]"),
+					ToFieldPath: ptr.To("metadata.annotations[\"foo\"]"),
 				},
 			},
 			want: want{
@@ -56,7 +56,7 @@ func TestEnvironmentPatchValidate(t *testing.T) {
 			args: args{
 				envPatch: &EnvironmentPatch{
 					Type:          PatchTypeCombineToComposite,
-					FromFieldPath: pointer.String("spec.foo"),
+					FromFieldPath: ptr.To("spec.foo"),
 					Combine:       nil, // required
 				},
 			},
@@ -156,6 +156,56 @@ func TestEnvironmentShouldResolve(t *testing.T) {
 			got := tc.args.ec.ShouldResolve(tc.args.refs)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("%s\nShouldResolve(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestEnvironmentSourceSelectorValidate(t *testing.T) {
+
+	type args struct {
+		e *EnvironmentSourceSelector
+	}
+
+	cases := map[string]struct {
+		reason string
+		args   args
+		want   *field.Error
+	}{
+		"ErrorModeSingleWithMaxMatch": {
+			reason: "Should error out when maxMatch is specified, but mode is Single",
+			args: args{
+				e: &EnvironmentSourceSelector{
+					Mode:     EnvironmentSourceSelectorSingleMode,
+					MaxMatch: ptr.To[uint64](1),
+				},
+			},
+			want: &field.Error{
+				Type:  field.ErrorTypeForbidden,
+				Field: "maxMatch",
+			},
+		},
+		"ErrorModeSingleWithMinMatch": {
+			reason: "Should error out when minMatch is specified, but mode is Single",
+			args: args{
+				e: &EnvironmentSourceSelector{
+					Mode:     EnvironmentSourceSelectorSingleMode,
+					MinMatch: ptr.To[uint64](0),
+				},
+			},
+			want: &field.Error{
+				Type:  field.ErrorTypeForbidden,
+				Field: "minMatch",
+			},
+		},
+	}
+
+	for name, tc := range cases {
+
+		t.Run(name, func(t *testing.T) {
+			got := tc.args.e.Validate()
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(field.Error{}, "Detail", "BadValue")); diff != "" {
+				t.Errorf("%s\nValidate(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
 	}

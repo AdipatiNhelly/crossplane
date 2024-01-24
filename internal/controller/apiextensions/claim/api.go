@@ -28,57 +28,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
-	"github.com/crossplane/crossplane-runtime/pkg/event"
-	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
-
-	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 )
 
 // Error strings.
 const (
-	errUpdateClaim          = "cannot update composite resource claim"
 	errBindClaimConflict    = "cannot bind claim that references a different composite resource"
 	errGetSecret            = "cannot get composite resource's connection secret"
-	errGetXRD               = "cannot get composite resource definition"
 	errSecretConflict       = "cannot establish control of existing connection secret"
 	errCreateOrUpdateSecret = "cannot create or update connection secret"
-
-	reasonCompositeDeletePolicy event.Reason = "CompositeDeletePolicy"
 )
-
-// An APIBinder binds claims to composites by updating them in a Kubernetes API
-// server.
-type APIBinder struct {
-	client client.Client
-}
-
-// NewAPIBinder returns a new APIBinder.
-func NewAPIBinder(c client.Client) *APIBinder {
-	return &APIBinder{client: c}
-}
-
-// Bind the supplied claim to the supplied composite.
-func (a *APIBinder) Bind(ctx context.Context, cm resource.CompositeClaim, cp resource.Composite) error {
-	existing := cm.GetResourceReference()
-	proposed := meta.ReferenceTo(cp, cp.GetObjectKind().GroupVersionKind())
-	equal := cmp.Equal(existing, proposed, cmpopts.IgnoreFields(corev1.ObjectReference{}, "UID"))
-
-	// We refuse to 're-bind' a claim that is already bound to a different
-	// composite resource.
-	if existing != nil && !equal {
-		return errors.New(errBindClaimConflict)
-	}
-
-	// There's no need to call update if the claim already references this
-	// composite resource.
-	if equal {
-		return nil
-	}
-
-	cm.SetResourceReference(proposed)
-	return errors.Wrap(a.client.Update(ctx, cm), errUpdateClaim)
-}
 
 // An APIConnectionPropagator propagates connection details by reading
 // them from and writing them to a Kubernetes API server.
@@ -136,32 +95,4 @@ func (a *APIConnectionPropagator) PropagateConnection(ctx context.Context, to re
 	}
 
 	return true, nil
-}
-
-// NewAPIDefaultSelector returns a APIDefaultSelector.
-func NewAPIDefaultSelector(c client.Client, ref corev1.ObjectReference, r event.Recorder) *APIDefaultSelector {
-	return &APIDefaultSelector{client: c, defRef: ref, recorder: r}
-}
-
-// APIDefaultSelector selects the default composite delete policy referenced in
-// the definition of the resource if the policy is not specified in the claim.
-type APIDefaultSelector struct {
-	client   client.Client
-	defRef   corev1.ObjectReference
-	recorder event.Recorder
-}
-
-// SelectDefaults selects the default composite delete policy if a policy is not
-// given in the Claim.
-func (s *APIDefaultSelector) SelectDefaults(ctx context.Context, cm resource.CompositeClaim) error {
-	if cm.GetCompositeDeletePolicy() != nil {
-		return nil
-	}
-	def := &v1.CompositeResourceDefinition{}
-	if err := s.client.Get(ctx, meta.NamespacedNameOf(&s.defRef), def); err != nil {
-		return errors.Wrap(err, errGetXRD)
-	}
-	cm.SetCompositeDeletePolicy(def.Spec.DefaultCompositeDeletePolicy)
-	s.recorder.Event(cm, event.Normal(reasonCompositeDeletePolicy, "Default composite delete policy has been selected"))
-	return nil
 }

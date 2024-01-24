@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -40,6 +40,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
+	"github.com/crossplane/crossplane/internal/names"
 )
 
 func TestPTCompose(t *testing.T) {
@@ -78,7 +79,7 @@ func TestPTCompose(t *testing.T) {
 									// This reference to a non-existent patchset
 									// triggers the error.
 									Type:         v1.PatchTypePatchSet,
-									PatchSetName: pointer.String("nonexistent-patchset"),
+									PatchSetName: ptr.To("nonexistent-patchset"),
 								}},
 							}},
 						},
@@ -115,14 +116,14 @@ func TestPTCompose(t *testing.T) {
 						tas := []TemplateAssociation{
 							{
 								Template: v1.ComposedTemplate{
-									Name: pointer.String("uncool-resource"),
+									Name: ptr.To("uncool-resource"),
 									Base: runtime.RawExtension{Raw: []byte("{}")}, // An invalid, empty base resource template.
 								},
 							},
 						}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error { return nil })),
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error { return nil })),
 					WithComposedConnectionDetailsFetcher(ConnectionDetailsFetcherFn(func(ctx context.Context, o resource.ConnectionSecretOwner) (managed.ConnectionDetails, error) {
 						return nil, nil
 					})),
@@ -154,13 +155,13 @@ func TestPTCompose(t *testing.T) {
 					WithTemplateAssociator(CompositionTemplateAssociatorFn(func(ctx context.Context, c resource.Composite, ct []v1.ComposedTemplate) ([]TemplateAssociation, error) {
 						tas := []TemplateAssociation{{
 							Template: v1.ComposedTemplate{
-								Name: pointer.String("cool-resource"),
+								Name: ptr.To("cool-resource"),
 								Base: base,
 							},
 						}}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error { return nil })),
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error { return nil })),
 				},
 			},
 			args: args{
@@ -186,13 +187,13 @@ func TestPTCompose(t *testing.T) {
 					WithTemplateAssociator(CompositionTemplateAssociatorFn(func(ctx context.Context, c resource.Composite, ct []v1.ComposedTemplate) ([]TemplateAssociation, error) {
 						tas := []TemplateAssociation{{
 							Template: v1.ComposedTemplate{
-								Name: pointer.String("cool-resource"),
+								Name: ptr.To("cool-resource"),
 								Base: base,
 							},
 						}}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error { return nil })),
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error { return nil })),
 				},
 			},
 			args: args{
@@ -218,13 +219,13 @@ func TestPTCompose(t *testing.T) {
 					WithTemplateAssociator(CompositionTemplateAssociatorFn(func(ctx context.Context, c resource.Composite, ct []v1.ComposedTemplate) ([]TemplateAssociation, error) {
 						tas := []TemplateAssociation{{
 							Template: v1.ComposedTemplate{
-								Name: pointer.String("cool-resource"),
+								Name: ptr.To("cool-resource"),
 								Base: base,
 							},
 						}}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error { return nil })),
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error { return nil })),
 					WithComposedConnectionDetailsFetcher(ConnectionDetailsFetcherFn(func(ctx context.Context, o resource.ConnectionSecretOwner) (managed.ConnectionDetails, error) {
 						return nil, errBoom
 					})),
@@ -253,13 +254,13 @@ func TestPTCompose(t *testing.T) {
 					WithTemplateAssociator(CompositionTemplateAssociatorFn(func(ctx context.Context, c resource.Composite, ct []v1.ComposedTemplate) ([]TemplateAssociation, error) {
 						tas := []TemplateAssociation{{
 							Template: v1.ComposedTemplate{
-								Name: pointer.String("cool-resource"),
+								Name: ptr.To("cool-resource"),
 								Base: base,
 							},
 						}}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error { return nil })),
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error { return nil })),
 					WithComposedConnectionDetailsFetcher(ConnectionDetailsFetcherFn(func(ctx context.Context, o resource.ConnectionSecretOwner) (managed.ConnectionDetails, error) {
 						return nil, nil
 					})),
@@ -291,13 +292,13 @@ func TestPTCompose(t *testing.T) {
 					WithTemplateAssociator(CompositionTemplateAssociatorFn(func(ctx context.Context, c resource.Composite, ct []v1.ComposedTemplate) ([]TemplateAssociation, error) {
 						tas := []TemplateAssociation{{
 							Template: v1.ComposedTemplate{
-								Name: pointer.String("cool-resource"),
+								Name: ptr.To("cool-resource"),
 								Base: base,
 							},
 						}}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error { return nil })),
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error { return nil })),
 					WithComposedConnectionDetailsFetcher(ConnectionDetailsFetcherFn(func(ctx context.Context, o resource.ConnectionSecretOwner) (managed.ConnectionDetails, error) {
 						return nil, nil
 					})),
@@ -362,13 +363,13 @@ func TestPTCompose(t *testing.T) {
 					WithTemplateAssociator(CompositionTemplateAssociatorFn(func(ctx context.Context, c resource.Composite, ct []v1.ComposedTemplate) ([]TemplateAssociation, error) {
 						tas := []TemplateAssociation{{
 							Template: v1.ComposedTemplate{
-								Name: pointer.String("cool-resource"),
+								Name: ptr.To("cool-resource"),
 								Base: base,
 							},
 						}}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error { return nil })),
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error { return nil })),
 					WithComposedConnectionDetailsFetcher(ConnectionDetailsFetcherFn(func(ctx context.Context, o resource.ConnectionSecretOwner) (managed.ConnectionDetails, error) {
 						return nil, nil
 					})),
@@ -412,7 +413,7 @@ func TestPTCompose(t *testing.T) {
 						tas := []TemplateAssociation{
 							{
 								Template: v1.ComposedTemplate{
-									Name: pointer.String("cool-resource"),
+									Name: ptr.To("cool-resource"),
 									Base: base,
 								},
 							},
@@ -420,14 +421,14 @@ func TestPTCompose(t *testing.T) {
 								// This resource won't apply successfully due to
 								// the clause below in the dry-run renderer.
 								Template: v1.ComposedTemplate{
-									Name: pointer.String("uncool-resource"),
+									Name: ptr.To("uncool-resource"),
 									Base: runtime.RawExtension{Raw: []byte(`{"apiVersion":"test.crossplane.io/v1","kind":"BrokenResource"}`)},
 								},
 							},
 						}
 						return tas, nil
 					})),
-					WithComposedDryRunRenderer(DryRunRendererFn(func(ctx context.Context, cd resource.Object) error {
+					WithComposedNameGenerator(names.NameGeneratorFn(func(ctx context.Context, cd resource.Object) error {
 						if cd.GetObjectKind().GroupVersionKind().Kind == "BrokenResource" {
 							return errBoom
 						}
@@ -464,7 +465,7 @@ func TestPTCompose(t *testing.T) {
 					},
 					ConnectionDetails: details,
 					Events: []event.Event{
-						event.Warning(reasonCompose, errors.Wrapf(errBoom, errFmtDryRunApply, "uncool-resource")),
+						event.Warning(reasonCompose, errors.Wrapf(errBoom, errFmtGenerateName, "uncool-resource")),
 					},
 				},
 			},

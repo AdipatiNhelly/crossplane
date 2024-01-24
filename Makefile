@@ -34,7 +34,7 @@ GO_TEST_PACKAGES = $(GO_PROJECT)/test/e2e
 GO_LDFLAGS += -X $(GO_PROJECT)/internal/version.version=$(VERSION)
 GO_SUBDIRS += cmd internal apis
 GO111MODULE = on
-GOLANGCILINT_VERSION = 1.54.2
+GOLANGCILINT_VERSION = 1.55.2
 GO_LINT_ARGS ?= "--fix"
 
 -include build/makelib/golang.mk
@@ -43,7 +43,7 @@ GO_LINT_ARGS ?= "--fix"
 # Setup Kubernetes tools
 
 USE_HELM3 = true
-HELM3_VERSION = v3.13.0
+HELM3_VERSION = v3.13.3
 KIND_VERSION = v0.20.0
 -include build/makelib/k8s_tools.mk
 

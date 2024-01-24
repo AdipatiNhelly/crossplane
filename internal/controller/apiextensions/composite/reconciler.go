@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"time"
 
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kunstructured "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -71,6 +72,8 @@ const (
 	errSelectEnvironment      = "cannot select environment"
 	errCompose                = "cannot compose resources"
 	errRenderCD               = "cannot render composed resource"
+
+	reconcilePausedMsg = "Reconciliation (including deletion) is paused via the pause annotation"
 )
 
 // Event reasons.
@@ -119,19 +122,6 @@ type CompositionRevisionFetcherFn func(ctx context.Context, cr resource.Composit
 
 // Fetch an appropriate Composition for the supplied Composite resource.
 func (fn CompositionRevisionFetcherFn) Fetch(ctx context.Context, cr resource.Composite) (*v1.CompositionRevision, error) {
-	return fn(ctx, cr)
-}
-
-// A CompositionUpdatePolicySelector selects a composition update policy.
-type CompositionUpdatePolicySelector interface {
-	SelectCompositionUpdatePolicy(ctx context.Context, cr resource.Composite) error
-}
-
-// A CompositionUpdatePolicySelectorFn selects a composition update policy.
-type CompositionUpdatePolicySelectorFn func(ctx context.Context, cr resource.Composite) error
-
-// SelectCompositionUpdatePolicy for the supplied composite resource.
-func (fn CompositionUpdatePolicySelectorFn) SelectCompositionUpdatePolicy(ctx context.Context, cr resource.Composite) error {
 	return fn(ctx, cr)
 }
 
@@ -290,14 +280,6 @@ func WithCompositionSelector(s CompositionSelector) ReconcilerOption {
 	}
 }
 
-// WithCompositionUpdatePolicySelector specifies how the composition update policy to be used should be
-// selected.
-func WithCompositionUpdatePolicySelector(s CompositionUpdatePolicySelector) ReconcilerOption {
-	return func(r *Reconciler) {
-		r.composite.CompositionUpdatePolicySelector = s
-	}
-}
-
 // WithEnvironmentSelector specifies how the environment to be used should be
 // selected.
 func WithEnvironmentSelector(s EnvironmentSelector) ReconcilerOption {
@@ -337,6 +319,14 @@ func WithComposer(c Composer) ReconcilerOption {
 	}
 }
 
+// WithKindObserver specifies how the Reconciler should observe kinds for
+// realtime events.
+func WithKindObserver(o KindObserver) ReconcilerOption {
+	return func(r *Reconciler) {
+		r.kindObserver = o
+	}
+}
+
 type revision struct {
 	CompositionRevisionFetcher
 	CompositionRevisionValidator
@@ -363,10 +353,26 @@ type environment struct {
 type compositeResource struct {
 	resource.Finalizer
 	CompositionSelector
-	CompositionUpdatePolicySelector
 	EnvironmentSelector
 	Configurator
 	managed.ConnectionPublisher
+}
+
+// KindObserver tracks kinds of referenced composed resources in composite
+// resources in order to start watches for them for realtime events.
+type KindObserver interface {
+	// WatchComposedResources starts a watch of the given kinds to trigger reconciles when
+	// a referenced object of those kinds changes.
+	WatchComposedResources(kind ...schema.GroupVersionKind)
+}
+
+// KindObserverFunc implements KindObserver as a function.
+type KindObserverFunc func(kind ...schema.GroupVersionKind)
+
+// WatchComposedResources starts a watch of the given kinds to trigger reconciles when
+// a referenced object of those kinds changes.
+func (fn KindObserverFunc) WatchComposedResources(kind ...schema.GroupVersionKind) {
+	fn(kind...)
 }
 
 // NewReconciler returns a new Reconciler of composite resources.
@@ -435,7 +441,8 @@ type Reconciler struct {
 	revision  revision
 	composite compositeResource
 
-	resource Composer
+	resource     Composer
+	kindObserver KindObserver
 
 	log    logging.Logger
 	record event.Recorder
@@ -466,9 +473,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// Check the pause annotation and return if it has the value "true"
 	// after logging, publishing an event and updating the SYNC status condition
 	if meta.IsPaused(xr) {
-		log.Debug("Reconciliation is paused via the pause annotation", "annotation", meta.AnnotationKeyReconciliationPaused, "value", "true")
 		r.record.Event(xr, event.Normal(reasonPaused, "Reconciliation is paused via the pause annotation"))
-		xr.SetConditions(xpv1.ReconcilePaused())
+		xr.SetConditions(xpv1.ReconcilePaused().WithMessage(reconcilePausedMsg))
 		// If the pause annotation is removed, we will have a chance to reconcile again and resume
 		// and if status update fails, we will reconcile again to retry to update the status
 		return reconcile.Result{}, errors.Wrap(r.client.Status().Update(ctx, xr), errUpdateStatus)
@@ -479,7 +485,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 		xr.SetConditions(xpv1.Deleting())
 		if err := r.composite.UnpublishConnection(ctx, xr, nil); err != nil {
-			log.Debug(errUnpublish, "error", err)
 			err = errors.Wrap(err, errUnpublish)
 			r.record.Event(xr, event.Warning(reasonDelete, err))
 			xr.SetConditions(xpv1.ReconcileError(err))
@@ -487,7 +492,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		}
 
 		if err := r.composite.RemoveFinalizer(ctx, xr); err != nil {
-			log.Debug(errRemoveFinalizer, "error", err)
+			if kerrors.IsConflict(err) {
+				return reconcile.Result{Requeue: true}, nil
+			}
 			err = errors.Wrap(err, errRemoveFinalizer)
 			r.record.Event(xr, event.Warning(reasonDelete, err))
 			xr.SetConditions(xpv1.ReconcileError(err))
@@ -500,24 +507,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	if err := r.composite.AddFinalizer(ctx, xr); err != nil {
-		log.Debug(errAddFinalizer, "error", err)
+		if kerrors.IsConflict(err) {
+			return reconcile.Result{Requeue: true}, nil
+		}
 		err = errors.Wrap(err, errAddFinalizer)
 		r.record.Event(xr, event.Warning(reasonInit, err))
 		xr.SetConditions(xpv1.ReconcileError(err))
 		return reconcile.Result{Requeue: true}, errors.Wrap(r.client.Status().Update(ctx, xr), errUpdateStatus)
 	}
 
-	if err := r.composite.SelectCompositionUpdatePolicy(ctx, xr); err != nil {
-		log.Debug(errSelectCompUpdatePolicy, "error", err)
-		err = errors.Wrap(err, errSelectCompUpdatePolicy)
-		r.record.Event(xr, event.Warning(reasonResolve, err))
-		xr.SetConditions(xpv1.ReconcileError(err))
-		return reconcile.Result{Requeue: true}, errors.Wrap(r.client.Status().Update(ctx, xr), errUpdateStatus)
-	}
-
 	orig := xr.GetCompositionReference()
 	if err := r.composite.SelectComposition(ctx, xr); err != nil {
-		log.Debug(errSelectComp, "error", err)
 		err = errors.Wrap(err, errSelectComp)
 		r.record.Event(xr, event.Warning(reasonResolve, err))
 		xr.SetConditions(xpv1.ReconcileError(err))
@@ -553,6 +553,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 	if err := r.composite.Configure(ctx, xr, rev); err != nil {
 		log.Debug(errConfigure, "error", err)
+		if kerrors.IsConflict(err) {
+			return reconcile.Result{Requeue: true}, nil
+		}
 		err = errors.Wrap(err, errConfigure)
 		r.record.Event(xr, event.Warning(reasonCompose, err))
 		xr.SetConditions(xpv1.ReconcileError(err))
@@ -587,15 +590,29 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	res, err := r.resource.Compose(ctx, xr, CompositionRequest{Revision: rev, Environment: env})
 	if err != nil {
 		log.Debug(errCompose, "error", err)
+		if kerrors.IsConflict(err) {
+			return reconcile.Result{Requeue: true}, nil
+		}
 		err = errors.Wrap(err, errCompose)
 		r.record.Event(xr, event.Warning(reasonCompose, err))
 		xr.SetConditions(xpv1.ReconcileError(err))
 		return reconcile.Result{Requeue: true}, errors.Wrap(r.client.Status().Update(ctx, xr), errUpdateStatus)
 	}
 
+	if r.kindObserver != nil {
+		var gvks []schema.GroupVersionKind
+		for _, ref := range xr.GetResourceReferences() {
+			gvks = append(gvks, ref.GroupVersionKind())
+		}
+		r.kindObserver.WatchComposedResources(gvks...)
+	}
+
 	published, err := r.composite.PublishConnection(ctx, xr, res.ConnectionDetails)
 	if err != nil {
 		log.Debug(errPublish, "error", err)
+		if kerrors.IsConflict(err) {
+			return reconcile.Result{Requeue: true}, nil
+		}
 		err = errors.Wrap(err, errPublish)
 		r.record.Event(xr, event.Warning(reasonPublish, err))
 		xr.SetConditions(xpv1.ReconcileError(err))
